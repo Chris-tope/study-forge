@@ -24,21 +24,15 @@ uploaded_file = st.file_uploader("Choose a file", type=["pptx", "docx", "pdf"])
 def describe_images(images, context_label):
     if not images:
         return ""
-    prompt = (
-        f"These images are from a {context_label}. For each image, describe its "
-        "content in detail — including any text, diagrams, labels, or charts. "
-        "Label each one clearly as 'Image 1:', 'Image 2:', etc."
-    )
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=[prompt, *images]
-    )
+    prompt = "These images are from a " + context_label + ". For each image, describe its content in detail, including any text, diagrams, labels, or charts. Label each one clearly as 'Image 1:', 'Image 2:', etc."
+    response = client.models.generate_content(model="gemini-3.6-flash", contents=[prompt, *images])
     return response.text
 
 
 def extract_pptx(file):
     prs = Presentation(file)
-    all_text, all_images = [], []
+    all_text = []
+    all_images = []
     for i, slide in enumerate(prs.slides, start=1):
         text_parts = []
         for shape in slide.shapes:
@@ -50,13 +44,17 @@ def extract_pptx(file):
                     all_images.append(img)
                 except Exception:
                     pass
-        all_text.append(f"Slide {i}:\n" + "\n".join(text_parts) if text_parts else f"Slide {i}: [image-only]")
+        if text_parts:
+            all_text.append("Slide " + str(i) + ":\n" + "\n".join(text_parts))
+        else:
+            all_text.append("Slide " + str(i) + ": [image-only]")
     return "\n\n".join(all_text), all_images
 
 
 def extract_docx(file):
     doc = Document(file)
-    all_text, all_images = [], []
+    all_text = []
+    all_images = []
     for para in doc.paragraphs:
         if para.text.strip():
             all_text.append(para.text)
@@ -78,26 +76,25 @@ def extract_pdf(file):
     with pdfplumber.open(file) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
             text = page.extract_text() or "[no extractable text]"
-            all_text.append(f"Page {i}:\n{text}")
+            all_text.append("Page " + str(i) + ":\n" + text)
     return "\n\n".join(all_text), []
 
 
 def generate_reviewer(content, context_label):
-    prompt = f"""Based on the following lesson content extracted from a {context_label}, create a clear, organized study reviewer. Include: 1. An overview of the topic 2. Key points as a bulleted list 3. Important terms and their definitions
-
-Lesson content:
-{content}
-"""
+    prompt = "Based on the following lesson content extracted from a " + context_label + ", create a clear, organized study reviewer. Include: 1. An overview of the topic 2. Key points as a bulleted list 3. Important terms and their definitions. Lesson content: " + content
     response = client.models.generate_content(model="gemini-3.6-flash", contents=[prompt])
     return response.text
 
 
 def generate_test_by_type(content, question_type, max_questions=50):
-    prompt = f"""Based on the following lesson content, create a {question_type} test that covers the ENTIRE lesson thoroughly, every major topic and key point should have at least one question. Scale the number of questions to how much content there is, but do NOT exceed {max_questions} questions total. Return ONLY valid JSON, no extra text, no markdown fences, in this exact structure: For true_false: {{"questions": [{{"question": "...", "answer": true}}]}} For multiple_choice: {{"questions": [{{"question": "...", "options": ["Option text 1", "Option text 2", "Option text 3", "Option text 4"], "answer": "Option text 2"}}]}} Note: "answer" must be an EXACT copy of one of the strings in "options". For identification: {{"questions": [{{"question": "...", "answer": "..."}}]}}
-
-Lesson content:
-{content}
-"""
+    instructions = "Based on the following lesson content, create a " + question_type + " test that covers the ENTIRE lesson thoroughly, every major topic and key point should have at least one question. Scale the number of questions to how much content there is, but do NOT exceed " + str(max_questions) + " questions total. Return ONLY valid JSON, no extra text, no markdown fences, in this exact structure: "
+    if question_type == "true_false":
+        schema = '{"questions": [{"question": "...", "answer": true}]}'
+    elif question_type == "multiple_choice":
+        schema = '{"questions": [{"question": "...", "options": ["Option text 1", "Option text 2", "Option text 3", "Option text 4"], "answer": "Option text 2"}]} Note: answer must be an EXACT copy of one of the strings in options.'
+    else:
+        schema = '{"questions": [{"question": "...", "answer": "..."}]}'
+    prompt = instructions + schema + " Lesson content: " + content
     response = client.models.generate_content(
         model="gemini-3.6-flash",
         contents=[prompt],
@@ -124,7 +121,7 @@ if uploaded_file is not None:
     st.text_area("Raw text", text_content, height=200)
 
     if images:
-        st.write(f"Found {len(images)} image(s) in this file.")
+        st.write("Found " + str(len(images)) + " image(s) in this file.")
 
     st.write("Choose what to generate:")
     col1, col2, col3, col4 = st.columns(4)
@@ -135,12 +132,12 @@ if uploaded_file is not None:
 
     needs_images = gen_reviewer or gen_tf or gen_mc or gen_id
     if needs_images and images and "image_descriptions" not in st.session_state:
-        with st.spinner(f"Reading {len(images)} image(s)..."):
+        with st.spinner("Reading " + str(len(images)) + " image(s)..."):
             st.session_state.image_descriptions = describe_images(images, context_label)
 
     full_content = text_content
     if "image_descriptions" in st.session_state:
-        full_content += "\n\n--- Image/Diagram Content ---\n" + st.session_state.image_descriptions
+        full_content = full_content + "\n\n--- Image/Diagram Content ---\n" + st.session_state.image_descriptions
 
     if gen_reviewer:
         with st.spinner("Generating your reviewer..."):
@@ -171,23 +168,17 @@ if uploaded_file is not None:
     if "active_test" in st.session_state:
         questions = st.session_state.active_test
         qtype = st.session_state.active_test_type
-        st.subheader(f"Test: {qtype.replace('_', ' ').title()} ({len(questions)} items)")
+        st.subheader("Test: " + qtype.replace("_", " ").title() + " (" + str(len(questions)) + " items)")
 
         with st.form("test_form"):
             for idx, q in enumerate(questions):
-                st.write(f"**{idx + 1}. {q['question']}**")
+                st.write("**" + str(idx + 1) + ". " + q["question"] + "**")
                 if qtype == "multiple_choice":
-                    st.session_state.answered[idx] = st.radio(
-                        "Choose one:", q["options"], key=f"q{idx}", label_visibility="collapsed"
-                    )
+                    st.session_state.answered[idx] = st.radio("Choose one:", q["options"], key="q" + str(idx), label_visibility="collapsed")
                 elif qtype == "true_false":
-                    st.session_state.answered[idx] = st.radio(
-                        "True or False:", ["True", "False"], key=f"q{idx}", label_visibility="collapsed"
-                    )
+                    st.session_state.answered[idx] = st.radio("True or False:", ["True", "False"], key="q" + str(idx), label_visibility="collapsed")
                 else:
-                    st.session_state.answered[idx] = st.text_input(
-                        "Your answer:", key=f"q{idx}", label_visibility="collapsed"
-                    )
+                    st.session_state.answered[idx] = st.text_input("Your answer:", key="q" + str(idx), label_visibility="collapsed")
                 st.write("")
             submitted = st.form_submit_button("Check Answers")
 
@@ -199,14 +190,11 @@ if uploaded_file is not None:
                 correct = str(q["answer"])
                 is_correct = str(user_ans).strip().lower() == correct.strip().lower()
                 if is_correct:
-                    score += 1
-                    st.success(f"{idx + 1}. Correct! ({correct})")
+                    score = score + 1
+                    st.success(str(idx + 1) + ". Correct! (" + correct + ")")
                 else:
-                    st.error(f"{idx + 1}. You answered '{user_ans}' — correct answer: {correct}")
-            st.subheader(f"Score: {score} / {len(questions)}")                                                                                                                                                                                                                                                                                                                                                                                                          at least one question. Scale the number of questions to how much content there is, but do NOT 
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                exceed {max_questions} questions total.
-
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                Return ONLY valid JSON, no extra text, no markdown fences, in this exact structure:
+                    st.error(str(idx + 1) + ". You answered '" + str(user_ans) + "' - correct answer: " + correct)
+            st.subheader("Score: " + str(score) + " / " + str(len(questions)))                                                                                            Return ONLY valid JSON, no extra text, no markdown fences, in this exact structure:
 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                 For true_false:
                                                                                                                                                                                                                                                                                                                                                                                                                                                                 {{"questions": [{{"question": "...", "answer": true}}]}}
